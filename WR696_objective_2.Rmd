@@ -55,7 +55,7 @@ fits_nls <- pre_q_long |>
     model   = list(nls(q_cfs ~ a * stage_ft^b,
                        data = cur_data(),
                        start = list(a = 1, b = 1))),
-    ss_tot  = sum((q_cfs - mean(q_cfs))^2),   # compute inside summarise
+    ss_tot  = sum((q_cfs - mean(q_cfs))^2),   
     .groups = "drop"
   ) |>
   mutate(
@@ -78,7 +78,9 @@ equation_labels <- fits_nls |>
 
 ```{r}
 #gah need to fix so upstream is first
-ggplot(pre_q_long |> filter(stage_ft > 0, q_cfs > 0),
+ggplot(pre_q_long |> 
+         filter(stage_ft > 0, q_cfs > 0) |>
+       mutate(location = factor(location, levels = c("Upstream", "Downstream"))), 
        aes(x = stage_ft, y = q_cfs)) +
   geom_point(aes(color = "Observed"), alpha = 1, size = 1) +
   geom_smooth(aes(color = "Fitted Rating Curve"), method = "nls",
@@ -165,7 +167,7 @@ outliers <- pre_q_long_seasons |>
 
 print(outliers)
 #maybe a storm on 8-9-2024? 
-#and then something happened from 6-1-2024 to 6-9-2024, maybe peak snowmelt?
+#and then something happened from 6-1-2024 to 6-9-2024, maybe peak snow melt?
 ```
 
 
