@@ -171,5 +171,355 @@ print(outliers)
 ```
 
 
+#post restoration
+```{r}
+q <- read_csv("data/LE_Qseries.csv")
+```
 
+```{r}
+post_q <- q |>
+  filter(date_time >= as_datetime("2025-08-05 00:00:00")) |>
+  mutate(date = as_date(date_time))
+```
+
+```{r}
+post_q_long <- post_q |>
+  pivot_longer(cols = c(ds_stage_ft, ds_q_cfs, us_stage_ft, us_q_cfs), names_to = c("location", ".value"), names_pattern = "(ds|us)_(.*)") |>
+  mutate(location = if_else(location == "ds", "Downstream", "Upstream"))
+```
+
+```{r}
+fits_post <- post_q_long |>
+  filter(stage_ft > 0, q_cfs > 0) |>  
+  group_by(location) |>
+  summarise(model   = list(lm(log(q_cfs) ~ log(stage_ft), data = cur_data())), .groups = "drop") |>
+  mutate(a = map_dbl(model, ~ exp(coef(.x)[1])),   
+    b = map_dbl(model, ~ coef(.x)[2]),         
+    r2 = map_dbl(model, ~ summary(.x)$r.squared),
+    label = paste0("Q = ", round(a, 3), " · h^", round(b, 3),
+                   "\nR² = ", round(r2, 3)))
+
+fits_post |> select(location, a, b, r2)
+```
+
+```{r}
+fits_nls_post <- post_q_long |>
+  filter(stage_ft > 0, q_cfs > 0) |>
+  group_by(location) |>
+  summarise(
+    model   = list(nls(q_cfs ~ a * stage_ft^b,
+                       data = cur_data(),
+                       start = list(a = 1, b = 1))),
+    ss_tot  = sum((q_cfs - mean(q_cfs))^2),   
+    .groups = "drop"
+  ) |>
+  mutate(
+    a  = map_dbl(model, ~ coef(.x)["a"]),
+    b  = map_dbl(model, ~ coef(.x)["b"]),
+    r2 = map2_dbl(model, ss_tot,
+                  ~ 1 - sum(residuals(.x)^2) / .y)
+  )
+
+fits_nls_post |> select(location, a, b, r2)
+```
+
+```{r}
+equation_labels_post <- fits_nls_post |>
+  mutate(label = paste0("Q = ", round(a, 2), " · h^", round(b, 2),
+                        "\nR² = ", round(r2, 3)), 
+         location = factor(location, levels = c("Upstream", "Downstream")))
+```
+
+
+```{r}
+ggplot(post_q_long |> 
+         filter(stage_ft > 0, q_cfs > 0) |>
+       mutate(location = factor(location, levels = c("Upstream", "Downstream"))), 
+       aes(x = stage_ft, y = q_cfs)) +
+  geom_point(aes(color = "Observed"), alpha = 1, size = 1) +
+  geom_smooth(aes(color = "Fitted Rating Curve"), method = "nls",
+              method.args = list(formula = y ~ a * x^b,
+                                 start = list(a = 1, b = 1)),
+              se = FALSE, linewidth = 1) +
+  scale_color_manual(values = c("Observed" = "steelblue2", "Fitted Rating Curve" = "navy")) +
+  facet_wrap(~ location) +
+  labs(title = "Stage-Discharge Rating Curves at Lower Elkhorn Post-Restoration",
+    subtitle = "August 2025 to October 2025",
+    x  = "Stage (ft)",
+    y = "Discharge (cfs)", 
+    color = NULL) +
+  geom_text(data = equation_labels_post,
+          aes(x = Inf, y = -Inf, label = label),
+          hjust = 1.1, vjust = -0.5,
+          size = 3.5, fontface = "italic",
+          inherit.aes = FALSE) +
+  theme(plot.title = element_text(face = "bold"), legend.position = c(0.10, .85), legend.background = element_rect(fill = "white", color = "grey80"))
+```
+
+```{r}
+equation_labels_combined <- bind_rows(
+  fits_nls |> mutate(period = "Pre-Restoration"),
+  fits_nls_post |> mutate(period = "Post-Restoration")
+) |>
+  mutate(
+    label    = paste0("Q = ", round(a, 2), " · h^", round(b, 2),
+                      "\nR² = ", round(r2, 3)),
+    location = factor(location, levels = c("Upstream", "Downstream")),
+    period   = factor(period, levels = c("Pre-Restoration", "Post-Restoration"))
+  )
+```
+
+
+```{r}
+combined_q <- bind_rows(
+  pre_q_long |> mutate(period = "Pre-Restoration"),
+  post_q_long |> mutate(period = "Post-Restoration")
+) |>
+  filter(stage_ft > 0, q_cfs > 0) |>
+  mutate(
+    location = factor(location, levels = c("Upstream", "Downstream")),
+    period   = factor(period, levels = c("Pre-Restoration", "Post-Restoration"))
+  )
+
+# plot
+ggplot(combined_q, aes(x = stage_ft, y = q_cfs)) +
+  geom_point(aes(color = period), alpha = 0.3, size = 0.8) +
+  geom_smooth(aes(color = period),
+              method = "nls",
+              method.args = list(formula = y ~ a * x^b,
+                                 start = list(a = 1, b = 1)),
+              se = FALSE, linewidth = 1) +
+  scale_color_manual(values = c("Pre-Restoration"  = "steelblue1",
+                                "Post-Restoration" = "navy"),
+                     name = NULL) +
+  facet_wrap(~ location) +
+  labs(
+    title    = "Stage-Discharge Rating Curves at Lower Elkhorn",
+    subtitle = "Pre- vs. Post-Restoration",
+    x        = "Stage (ft)",
+    y        = "Discharge (cfs)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold"),
+    strip.background = element_rect(fill = "grey90"),
+    strip.text       = element_text(face = "bold"),
+    legend.position  = c(0.10, 0.85),
+    legend.background = element_rect(fill = "white", color = "grey80")
+  )
+```
+
+
+```{r}
+ggplot(combined_q, aes(x = stage_ft, y = q_cfs)) +
+  geom_point(aes(color = period), alpha = 0.3, size = 0.8) +
+  geom_smooth(aes(color = period),
+              method = "nls",
+              method.args = list(formula = y ~ a * x^b,
+                                 start = list(a = 1, b = 1)),
+              se = FALSE, linewidth = 1) +
+  scale_color_manual(values = c("Pre-Restoration"  = "steelblue",
+                                "Post-Restoration" = "navy"),
+                     name = NULL) +
+  # pre-restoration equations bottom-right
+  geom_text(data = equation_labels_combined |> 
+              filter(period == "Pre-Restoration"),
+            aes(x = Inf, y = -Inf, label = label),
+            hjust = 1.1, vjust = -0.5,
+            size = 3, fontface = "italic",
+            color = "steelblue",
+            inherit.aes = FALSE) +
+  # post-restoration equations above pre
+  geom_text(data = equation_labels_combined |> 
+              filter(period == "Post-Restoration"),
+            aes(x = Inf, y = -Inf, label = label),
+            hjust = 1.1, vjust = -3.5,
+            size = 3, fontface = "italic",
+            color = "navy",
+            inherit.aes = FALSE) +
+  facet_wrap(~ location) +
+  labs(
+    title    = "Stage-Discharge Rating Curves at Lower Elkhorn",
+    subtitle = "Pre- vs. Post-Restoration",
+    x        = "Stage (ft)",
+    y        = "Discharge (cfs)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title        = element_text(face = "bold"),
+    strip.background  = element_rect(fill = "grey90"),
+    strip.text        = element_text(face = "bold"),
+    legend.position   = c(0.10, 0.85),
+    legend.background = element_rect(fill = "white", color = "grey80")
+  )
+```
+
+
+```{r}
+q_field <- read_csv("data/LE_Qseries_field.csv")
+```
+
+```{r}
+q_field_long <- q_field |>
+  select(date_time, ds_q_cfs, us_q_cfs) |>
+  pivot_longer(
+    cols = c(ds_q_cfs, us_q_cfs),
+    names_to = c("location", ".value"),
+    names_pattern = "(ds|us)_(.*)"
+  ) |>
+  mutate(
+    location = if_else(location == "ds", "Downstream", "Upstream"),
+    period   = case_when(
+      as_date(date_time) <= ymd("2025-07-20") ~ "Pre-Restoration",
+      as_date(date_time) >= ymd("2025-08-05") ~ "Post-Restoration"),
+    location = factor(location, levels = c("Upstream", "Downstream")),
+    period   = factor(period, levels = c("Pre-Restoration", 
+                                         "Post-Restoration"))
+  )
+```
+
+#new color scheme
+#final hydrograph:
+```{r}
+ggplot(q_field_long, aes(x = date_time, y = q_cfs, color = location)) +
+  geom_line(linewidth = 0.5, alpha = 0.8) +
+  scale_color_manual(values = c("Upstream"   = "forestgreen",
+                                "Downstream" = "navy"),
+                     name = NULL) +
+  annotate("rect", 
+           xmin = as_datetime("2025-07-20"), 
+           xmax = as_datetime("2025-08-05"),
+           ymin = -Inf, ymax = Inf,
+           fill = "grey70", alpha = 0.4) +
+  annotate("text",
+           x = as_datetime("2025-07-28"),
+           y = Inf,
+           label = "Restoration\nPeriod",
+           vjust = 1.2, size = 3) +
+  geom_vline(xintercept = as_datetime("2026-04-16"),
+             linetype = "dashed", color = "black", linewidth = 0.5) +
+  annotate("text",
+           x = as_datetime("2026-04-16"),
+           y = Inf,
+           label = "Field Day\nMeasurement",
+           vjust = 1.2, hjust = 1.1, size = 3, color = "black") +
+  facet_wrap(~ location, ncol = 1) +          # stack vertically
+  labs(
+    title    = "Streamflow Hydrograph at Lower Elkhorn",
+    subtitle = "Pre- and Post-Restoration",
+    x        = NULL,
+    y        = "Discharge (cfs)"
+  ) +
+  scale_x_datetime(date_labels = "%b %Y", date_breaks = "2 months") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title        = element_text(face = "bold"),
+    legend.position   = "none",              # redundant with facet labels
+    axis.text.x       = element_text(angle = 45, hjust = 1)
+  )
+```
+
+#closer look at post-restoration
+```{r}
+ggplot(q_field_long |> filter(period == "Post-Restoration", date_time <= as_datetime("2025-12-31")),
+       aes(x = date_time, y = q_cfs, color = location)) +
+  geom_line(linewidth = 0.5, alpha = 0.8) +
+  scale_color_manual(values = c("Upstream"   = "steelblue",
+                                "Downstream" = "navy"),
+                     name = NULL) +
+  facet_wrap(~ location, ncol = 1) +
+  labs(
+    title    = "Streamflow Hydrograph at Lower Elkhorn - Post-Restoration",
+    subtitle = "August 2025 - October 2025",
+    x        = NULL,
+    y        = "Discharge (cfs)"
+  ) +
+  scale_x_datetime(date_labels = "%b %Y", date_breaks = "1 month") +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title      = element_text(face = "bold"),
+    legend.position = "none",
+    axis.text.x     = element_text(angle = 45, hjust = 1)
+  )
+```
+
+
+#new color scheme for rating curve:
+```{r}
+# create color grouping variable
+combined_q <- combined_q |>
+  mutate(color_group = case_when(
+    period == "Pre-Restoration"                             ~ "Pre-Restoration",
+    period == "Post-Restoration" & location == "Upstream"   ~ "Upstream Post-Restoration",
+    period == "Post-Restoration" & location == "Downstream" ~ "Downstream Post-Restoration"
+  ),
+  color_group = factor(color_group, levels = c("Pre-Restoration",
+                                               "Upstream Post-Restoration",
+                                               "Downstream Post-Restoration")))
+
+ggplot(combined_q, aes(x = stage_ft, y = q_cfs)) +
+  geom_point(aes(color = color_group), alpha = 0.6, size = 0.8) +
+  geom_smooth(aes(color = color_group),
+              method = "nls",
+              method.args = list(formula = y ~ a * x^b,
+                                 start = list(a = 1, b = 1)),
+              se = FALSE, linewidth = 1) +
+  scale_color_manual(
+    values = c("Pre-Restoration"             = "grey60",
+               "Upstream Post-Restoration"   = "forestgreen",
+               "Downstream Post-Restoration" = "navy"),
+    name = NULL) +
+  # pre-restoration equations bottom-right
+  geom_text(data = equation_labels_combined |>
+              filter(period == "Pre-Restoration"),
+            aes(x = Inf, y = -Inf, label = label),
+            hjust = 1.1, vjust = -0.5,
+            size = 3, fontface = "italic",
+            color = "grey30",
+            inherit.aes = FALSE) +
+  # post-restoration equations above pre
+  geom_text(data = equation_labels_combined |>
+              filter(period == "Post-Restoration",
+                     location == "Upstream"),
+            aes(x = Inf, y = -Inf, label = label),
+            hjust = 1.1, vjust = -2.7,
+            size = 3, fontface = "italic",
+            color = "forestgreen",
+            inherit.aes = FALSE) +
+  geom_text(data = equation_labels_combined |>
+              filter(period == "Post-Restoration",
+                     location == "Downstream"),
+            aes(x = Inf, y = -Inf, label = label),
+            hjust = 1.1, vjust = -2.7,
+            size = 3, fontface = "italic",
+            color = "navy",
+            inherit.aes = FALSE) +
+  facet_wrap(~ location) +
+  labs(
+    title    = "Stage-Discharge Rating Curves at Lower Elkhorn",
+    subtitle = "Pre- vs. Post-Restoration",
+    x        = "Stage (ft)",
+    y        = "Discharge (cfs)"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(
+    plot.title        = element_text(face = "bold"),
+    strip.background  = element_rect(fill = "grey90"),
+    strip.text        = element_text(face = "bold"),
+    legend.position   = c(0.14, 0.88),
+    legend.background = element_rect(fill = "white", color = "grey80")
+  )
+```
+
+#looking into stage-discharge upstream: 
+```{r}
+post_q_long |>
+  filter(location == "Upstream",
+         q_cfs > 30) |>
+  summarise(
+    min_date = min(date_time),
+    max_date = max(date_time),
+    max_q    = max(q_cfs)
+  )
+```
 
