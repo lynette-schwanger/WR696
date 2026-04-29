@@ -383,8 +383,8 @@ q_field_long <- q_field |>
 ```{r}
 ggplot(q_field_long, aes(x = date_time, y = q_cfs, color = location)) +
   geom_line(linewidth = 0.5, alpha = 0.8) +
-  scale_color_manual(values = c("Upstream"   = "forestgreen",
-                                "Downstream" = "navy"),
+  scale_color_manual(values = c("Upstream"   = "#4662D7FF",
+                                "Downstream" = "#36AAF9FF"),
                      name = NULL) +
   annotate("rect", 
            xmin = as_datetime("2025-07-20"), 
@@ -458,7 +458,7 @@ combined_q <- combined_q |>
                                                "Downstream Post-Restoration")))
 
 ggplot(combined_q, aes(x = stage_ft, y = q_cfs)) +
-  geom_point(aes(color = color_group), alpha = 0.6, size = 0.8) +
+  geom_point(aes(color = color_group), alpha = 0.9, size = 0.8) +
   geom_smooth(aes(color = color_group),
               method = "nls",
               method.args = list(formula = y ~ a * x^b,
@@ -466,8 +466,8 @@ ggplot(combined_q, aes(x = stage_ft, y = q_cfs)) +
               se = FALSE, linewidth = 1) +
   scale_color_manual(
     values = c("Pre-Restoration"             = "grey60",
-               "Upstream Post-Restoration"   = "forestgreen",
-               "Downstream Post-Restoration" = "navy"),
+               "Upstream Post-Restoration"   = "#4662D7FF",
+               "Downstream Post-Restoration" = "#36AAF9FF"),
     name = NULL) +
   # pre-restoration equations bottom-right
   geom_text(data = equation_labels_combined |>
@@ -484,7 +484,7 @@ ggplot(combined_q, aes(x = stage_ft, y = q_cfs)) +
             aes(x = Inf, y = -Inf, label = label),
             hjust = 1.1, vjust = -2.7,
             size = 3, fontface = "italic",
-            color = "forestgreen",
+            color = "#4662D7FF",
             inherit.aes = FALSE) +
   geom_text(data = equation_labels_combined |>
               filter(period == "Post-Restoration",
@@ -492,7 +492,7 @@ ggplot(combined_q, aes(x = stage_ft, y = q_cfs)) +
             aes(x = Inf, y = -Inf, label = label),
             hjust = 1.1, vjust = -2.7,
             size = 3, fontface = "italic",
-            color = "navy",
+            color = "#36AAF9FF",
             inherit.aes = FALSE) +
   facet_wrap(~ location) +
   labs(
@@ -521,5 +521,9 @@ post_q_long |>
     max_date = max(date_time),
     max_q    = max(q_cfs)
   )
+```
+
+```{r}
+viridis(n = 10, option = "H")
 ```
 
